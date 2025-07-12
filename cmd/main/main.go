@@ -2,16 +2,35 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	integratonsdk "github.com/jerin-hc/integration-sdk/internal"
+	"github.com/jerin-hc/integration-sdk/jsoncodec"
+	"github.com/jerin-hc/integration-sdk/schema"
 )
 
 func main() {
+
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		<-c
+		fmt.Fprintln(os.Stderr, "plugin received SIGINT/SIGTERM, exiting...")
+		os.Exit(0)
+	}()
+
+	jsoncodec.Init()
+
+	// setting for developmet purpose
+	os.Setenv("TF_PLUGIN_MAGIC_COOKIE", "d602bf8f470bc67ca7faa0386276bbdd4330efaf76d1a219cb4d6991ca9872b2")
+
 	s := integratonsdk.New("example-cost-analyzer-v1")
 
 	// Handle multiple event types, e.g., post-plan or a custom assessment trigger
-	s.Handle([]integratonsdk.Event{integratonsdk.PostPlan, integratonsdk.PostResourceAssessment}, func(event integratonsdk.Event, resources []integratonsdk.Resource, ctx integratonsdk.Ctx) *integratonsdk.ResourceResponse {
-		updates := make([]integratonsdk.ResourceChange, 0)
+	s.Handle([]schema.Event{schema.PostPlan, schema.PostResourceAssessment}, func(event schema.Event, resources []schema.Resource, ctx schema.Ctx) *schema.ResourceResponse {
+		updates := make([]schema.ResourceChange, 0)
 		totalCost := 0.0
 		instanceCount := 0
 
@@ -31,7 +50,7 @@ func main() {
 				}
 
 				// Assess and suggest changes
-				comment := integratonsdk.Comment{
+				comment := schema.Comment{
 					Pass:    currentCost <= 40.0, // Example budget check
 					Message: fmt.Sprintf("Instance cost: $%.2f/mo.", currentCost),
 				}
@@ -39,7 +58,7 @@ func main() {
 					comment.Message += " Exceeds budget of $40/mo. Consider changing to " + suggestedInstanceType + "."
 				}
 
-				change := integratonsdk.ResourceChange{
+				change := schema.ResourceChange{
 					Identity: resource.Identity,
 					Mutate: map[string]interface{}{ // Suggest attribute changes
 						"instance_type": suggestedInstanceType,
@@ -58,9 +77,9 @@ func main() {
 			overallAssessmentComment += ". Overall budget exceeded."
 		}
 
-		return &integratonsdk.ResourceResponse{
+		return &schema.ResourceResponse{
 			Resources: updates,
-			Comment: integratonsdk.Comment{ // Overall assessment for the task run
+			Comment: schema.Comment{ // Overall assessment for the task run
 				Pass:    totalCost <= 100.0,
 				Message: overallAssessmentComment,
 			},
