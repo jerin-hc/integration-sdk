@@ -2,53 +2,56 @@ package integratonsdk
 
 import (
 	"context"
-	"fmt"
-)
 
-type Event string
+	"github.com/hashicorp/go-plugin"
+	grpcplugin "github.com/jerin-hc/integration-sdk/grpc-plugin"
+	"github.com/jerin-hc/integration-sdk/schema"
+	"google.golang.org/grpc"
+)
 
 const (
-	PrePlan                Event = "pre_plan"
-	PostPlan               Event = "post_plan"
-	PreApply               Event = "pre_apply"
-	PostApply              Event = "post_apply"
-	PostResourceAssessment Event = "post_resource_assessment"
+	grpcMaxMessageSize        = 256 << 20
+	protocolVersionMajor uint = 5
 )
-
-type Resource struct {
-	Type     string
-	Identity string
-}
-
-type ResourceResponse struct {
-	Resources []ResourceChange
-	Comment   Comment
-}
-
-type Ctx context.Context
-
-type Serve struct{}
-
-type Comment struct {
-	Pass    bool
-	Message string
-}
-
-type ResourceChange struct {
-	Identity   string
-	Mutate     map[string]interface{}
-	Annotation map[string]interface{}
-	Comment    Comment
-}
 
 func New(id string) *Serve {
 	return &Serve{}
 }
 
-func (s *Serve) Handle(event []Event, handleFunc func(event Event, resources []Resource, ctx Ctx) *ResourceResponse) {
-	fmt.Println("TODO")
+type Serve struct {
+	Event      schema.Event
+	Resources  []schema.Resource
+	Ctx        schema.Ctx
+	handleFunc func(event schema.Event, resources []schema.Resource, ctx schema.Ctx) *schema.ResourceResponse
+}
+
+func (s *Serve) HandleFunc(ctx context.Context, req *schema.HandleFuncRequest) (*schema.ResourceResponse, error) {
+	return s.handleFunc(req.Event, req.Resources, ctx), nil
+}
+
+func (s *Serve) Handle(event []schema.Event, handleFunc func(event schema.Event, resources []schema.Resource, ctx schema.Ctx) *schema.ResourceResponse) {
+	s.handleFunc = handleFunc
 }
 
 func (s *Serve) Run() {
-	fmt.Println("TODO")
+	serveConfig := &plugin.ServeConfig{
+		HandshakeConfig: plugin.HandshakeConfig{
+			ProtocolVersion:  protocolVersionMajor,
+			MagicCookieKey:   "TF_PLUGIN_MAGIC_COOKIE",
+			MagicCookieValue: "d602bf8f470bc67ca7faa0386276bbdd4330efaf76d1a219cb4d6991ca9872b2",
+		},
+		Plugins: plugin.PluginSet{
+			"provider": &grpcplugin.HandlerPlugin{
+				IntegrationServer: s,
+			},
+		},
+		GRPCServer: func(opts []grpc.ServerOption) *grpc.Server {
+			opts = append(opts, grpc.MaxRecvMsgSize(grpcMaxMessageSize))
+			opts = append(opts, grpc.MaxSendMsgSize(grpcMaxMessageSize))
+
+			return grpc.NewServer(opts...)
+		},
+	}
+
+	plugin.Serve(serveConfig)
 }
